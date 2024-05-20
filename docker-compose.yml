@@ -1,19 +1,21 @@
-version: '3.8'
 services:
   db:
-    image: mongo:4.4
+    image: mongo:latest
     ports:
       - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: birthdaydb
     volumes:
-      - db_data:/data/db
-  web:
+      - mongo-data:/data/db
+
+  birthday-service:
     build: .
     ports:
       - "8080:8080"
     depends_on:
       - db
     environment:
-      - MONGO_URL=mongodb://db:27017
+      MONGO_URL: mongodb://db:27017/birthdaydb
 
 volumes:
-  db_data:
+  mongo-data:

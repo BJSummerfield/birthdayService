@@ -1,8 +1,8 @@
 package main
 
-import "go.mongodb.org/mongo-driver/bson/primitive"
+import "github.com/google/uuid"
 
 type Birthday struct {
-    ID       primitive.ObjectID `json:"id,omitempty" bson:"_id,omitempty"`
-    Birthday string             `json:"birthday" bson:"birthday"`
+	ID       uuid.UUID `json:"id" bson:"id"`
+	Birthday string    `json:"birthday" bson:"birthday"`
 }
