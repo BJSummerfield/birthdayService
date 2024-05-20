@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"log"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,8 +26,8 @@ func CreateBirthday(client *mongo.Client) gin.HandlerFunc {
 			return
 		}
 
-		if birthday.ID == uuid.Nil {
-			birthday.ID = uuid.New()
+		if birthday.ID == "" {
+			birthday.ID = uuid.New().String()
 		}
 
 		collection := getCollection(client)
@@ -44,7 +46,10 @@ func CreateBirthday(client *mongo.Client) gin.HandlerFunc {
 
 func GetBirthdayByID(client *mongo.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		id, err := uuid.Parse(c.Param("id"))
+		id := c.Param("id")
+
+		// Convert the string ID to a UUID
+		uuidID, err := uuid.Parse(id)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
 			return
@@ -55,7 +60,7 @@ func GetBirthdayByID(client *mongo.Client) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		err = collection.FindOne(ctx, bson.M{"id": id}).Decode(&birthday)
+		err = collection.FindOne(ctx, bson.M{"id": uuidID.String()}).Decode(&birthday) // Use the string representation of the UUID
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Birthday not found"})
 			return
@@ -89,38 +94,53 @@ func GetBirthdays(client *mongo.Client) gin.HandlerFunc {
 	}
 }
 
+
 func UpdateBirthday(client *mongo.Client) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		id, err := uuid.Parse(c.Param("id"))
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
-			return
-		}
+    return func(c *gin.Context) {
+        id := c.Param("id")
+        uuidID, err := uuid.Parse(id)
+        if err != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
+            return
+        }
 
-		var birthday Birthday
-		if err := c.ShouldBindJSON(&birthday); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
+        var reqBirthday Birthday
+        if err := c.ShouldBindJSON(&reqBirthday); err != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+            return
+        }
 
-		collection := getCollection(client)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+        collection := getCollection(client)
+        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+        defer cancel()
 
-		update := bson.M{"$set": birthday}
-		_, err = collection.UpdateOne(ctx, bson.M{"id": id}, update, options.Update().SetUpsert(true))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
+        update := bson.M{"$set": bson.M{"birthday": reqBirthday.Birthday}}
+        result, err := collection.UpdateOne(ctx, bson.M{"id": uuidID.String()}, update, options.Update().SetUpsert(true))
+        if err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+            return
+        }
 
-		c.JSON(http.StatusOK, birthday)
-	}
+        if result.MatchedCount == 0 {
+            c.JSON(http.StatusNotFound, gin.H{"error": "Birthday not found"})
+            return
+        }
+
+        // Optionally log the updated document for debugging
+        updatedDoc := Birthday{}
+        if err := collection.FindOne(ctx, bson.M{"id": uuidID.String()}).Decode(&updatedDoc); err != nil {
+            log.Printf("Error finding updated birthday: %v", err)
+        }
+
+        c.JSON(http.StatusOK, updatedDoc)
+    }
 }
+
 
 func DeleteBirthday(client *mongo.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		id, err := uuid.Parse(c.Param("id"))
+		id := c.Param("id")
+		uuidID, err := uuid.Parse(id)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID"})
 			return
@@ -130,7 +150,7 @@ func DeleteBirthday(client *mongo.Client) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		_, err = collection.DeleteOne(ctx, bson.M{"id": id})
+		_, err = collection.DeleteOne(ctx, bson.M{"id": uuidID.String()})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
