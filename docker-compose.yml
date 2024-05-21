@@ -1,5 +1,5 @@
 services:
-  db:
+  microservices-demo-mongo:
     image: mongo:latest
     ports:
       - "27017:27017"
@@ -8,14 +8,15 @@ services:
     volumes:
       - mongo-data:/data/db
 
-  birthday-service:
+  microservices-demo-birthday-service:
     build: .
     ports:
       - "8080:8080"
     depends_on:
-      - db
+      - microservices-demo-mongo
     environment:
-      MONGO_URL: mongodb://db:27017/birthdaydb
+      MONGO_URL: mongodb://microservices-demo-mongo:27017/birthdaydb
 
 volumes:
   mongo-data:
+
