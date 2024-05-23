@@ -17,7 +17,7 @@ var client *mongo.Client
 func init() {
 	mongoURL := os.Getenv("MONGO_URL")
 	if mongoURL == "" {
-		mongoURL = "mongodb://db:27017/birthdaydb"
+		mongoURL = "mongodb://microservices-demo-birthdays-mongo:27017/birthdaydb"
 	}
 	clientOptions := options.Client().ApplyURI(mongoURL)
 	var err error
