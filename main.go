@@ -15,6 +15,7 @@ import (
 var client *mongo.Client
 
 func init() {
+	// Initialize MongoDB connection
 	mongoURL := os.Getenv("MONGO_URL")
 	if mongoURL == "" {
 		mongoURL = "mongodb://microservices-demo-birthdays-mongo:27017/birthdaydb"
@@ -43,17 +44,21 @@ func init() {
 func main() {
 	r := gin.Default()
 
+	// Setup API endpoints
 	r.GET("/birthdays", GetBirthdays(client))
 	r.GET("/birthdays/:id", GetBirthdayByID(client))
 	r.POST("/birthdays", CreateBirthday(client))
 	r.PUT("/birthdays/:id", UpdateBirthday(client))
 	r.DELETE("/birthdays/:id", DeleteBirthday(client))
 
+	// Start RabbitMQ listener in a separate goroutine
+    go StartListeningForEvents(client) // Changed this to the correct function call
+
+	// Start the HTTP server
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-
 	if err := r.Run(":" + port); err != nil {
 		log.Fatal(err)
 	}

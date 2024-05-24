@@ -93,7 +93,6 @@ func GetBirthdays(client *mongo.Client) gin.HandlerFunc {
 	}
 }
 
-
 func UpdateBirthday(client *mongo.Client) gin.HandlerFunc {
     return func(c *gin.Context) {
         id := c.Param("id")
@@ -125,16 +124,19 @@ func UpdateBirthday(client *mongo.Client) gin.HandlerFunc {
             return
         }
 
-        // Optionally log the updated document for debugging
         updatedDoc := Birthday{}
         if err := collection.FindOne(ctx, bson.M{"id": uuidID.String()}).Decode(&updatedDoc); err != nil {
             log.Printf("Error finding updated birthday: %v", err)
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve updated birthday"})
+            return
         }
+
+        // Publish the birthdayUpdated event
+        PublishEvent("birthdayUpdated", updatedDoc)
 
         c.JSON(http.StatusOK, updatedDoc)
     }
 }
-
 
 func DeleteBirthday(client *mongo.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {

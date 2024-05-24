@@ -16,6 +16,18 @@ services:
       - microservices-demo-birthdays-mongo
     environment:
       MONGO_URL: mongodb://microservices-demo-birthdays-mongo:27017/birthdaydb
+      RABBITMQ_URL: amqp://rabbitmq:5672/
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   mongo-data:
