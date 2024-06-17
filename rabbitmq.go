@@ -3,13 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"log"
-	"time"
-
 	"github.com/google/uuid"
-        amqp "github.com/rabbitmq/amqp091-go"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 )
 
 // EventMessage struct for RabbitMQ events
@@ -23,13 +25,14 @@ type EventMessage struct {
 	Payload       interface{} `json:"payload"`
 }
 
-// Setup RabbitMQ connection with retry logic
-func setupRabbitMQ() *amqp.Channel {
-	var conn *amqp.Connection
+var rabbitMQConn *amqp.Connection
+var rabbitMQChannel *amqp.Channel
+
+func initRabbitMQ() {
 	var err error
 	attempts := 0
 	for attempts < 30 {
-		conn, err = amqp.Dial("amqp://rabbitmq:5672/")
+		rabbitMQConn, err = amqp.Dial("amqp://rabbitmq:5672/")
 		if err == nil {
 			break
 		}
@@ -40,12 +43,13 @@ func setupRabbitMQ() *amqp.Channel {
 	if err != nil {
 		log.Fatalf("Failed to connect to RabbitMQ after 30 attempts: %v", err)
 	}
-	ch, err := conn.Channel()
+
+	rabbitMQChannel, err = rabbitMQConn.Channel()
 	if err != nil {
 		log.Fatalf("Failed to open a channel: %v", err)
 	}
 
-	err = ch.ExchangeDeclare(
+	err = rabbitMQChannel.ExchangeDeclare(
 		"user_events", // exchange name
 		"topic",       // exchange type
 		false,         // durable
@@ -59,13 +63,20 @@ func setupRabbitMQ() *amqp.Channel {
 	}
 
 	log.Println("Connected to RabbitMQ and channel opened.")
-	return ch
+
+	// Graceful shutdown
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		log.Println("Gracefully shutting down RabbitMQ connection and channel...")
+		rabbitMQChannel.Close()
+		rabbitMQConn.Close()
+		os.Exit(0)
+	}()
 }
 
 func PublishEvent(eventType string, payload interface{}) {
-	ch := setupRabbitMQ()
-	defer ch.Close()
-
 	event := EventMessage{
 		Timestamp:     time.Now().Format(time.RFC3339),
 		Version:       "1.0",
@@ -82,11 +93,11 @@ func PublishEvent(eventType string, payload interface{}) {
 		return
 	}
 
-	err = ch.Publish(
-		"user_events",                 // exchange
-		"userManagement."+eventType,   // routing key
-		false,                         // mandatory
-		false,                         // immediate
+	err = rabbitMQChannel.Publish(
+		"user_events",               // exchange
+		"userManagement."+eventType, // routing key
+		false,                       // mandatory
+		false,                       // immediate
 		amqp.Publishing{
 			ContentType: "application/json",
 			Body:        body,
@@ -101,68 +112,65 @@ func PublishEvent(eventType string, payload interface{}) {
 }
 
 func StartListeningForEvents(client *mongo.Client) {
-    ch := setupRabbitMQ()
-    defer ch.Close()
+	queue, err := rabbitMQChannel.QueueDeclare(
+		"birthdayQueue", // Queue name can be left empty to let RabbitMQ generate a unique name
+		true,            // Make the queue durable so it survives broker restarts
+		false,           // Do not delete when unused
+		false,           // Exclusive should be false to allow connections from other consumers in the future
+		false,           // No-wait
+		nil,             // Arguments
+	)
+	failOnError(err, "Failed to declare a queue")
 
-    queue, err := ch.QueueDeclare(
-        "birthdayQueue",  // Queue name can be left empty to let RabbitMQ generate a unique name
-        true,             // Make the queue durable so it survives broker restarts
-        false,            // Do not delete when unused
-        false,            // Exclusive should be false to allow connections from other consumers in the future
-        false,            // No-wait
-        nil,              // Arguments
-    )
-    failOnError(err, "Failed to declare a queue")
+	// Binding to userCreated events
+	err = rabbitMQChannel.QueueBind(
+		queue.Name,                   // queue name
+		"userManagement.userCreated", // specific routing key for userCreated
+		"user_events",                // exchange
+		false,                        // no-wait
+		nil,                          // arguments
+	)
+	failOnError(err, "Failed to bind a queue for userCreated")
 
-    // Binding to userCreated events
-    err = ch.QueueBind(
-        queue.Name,               // queue name
-        "userManagement.userCreated", // specific routing key for userCreated
-        "user_events",            // exchange
-        false,                    // no-wait
-        nil,                      // arguments
-    )
-    failOnError(err, "Failed to bind a queue for userCreated")
+	// Binding to userDeleted events
+	err = rabbitMQChannel.QueueBind(
+		queue.Name,                   // queue name
+		"userManagement.userDeleted", // specific routing key for userDeleted
+		"user_events",                // exchange
+		false,                        // no-wait
+		nil,                          // arguments
+	)
+	failOnError(err, "Failed to bind a queue for userDeleted")
 
-    // Binding to userDeleted events
-    err = ch.QueueBind(
-        queue.Name,               // queue name
-        "userManagement.userDeleted", // specific routing key for userDeleted
-        "user_events",            // exchange
-        false,                    // no-wait
-        nil,                      // arguments
-    )
-    failOnError(err, "Failed to bind a queue for userDeleted")
+	msgs, err := rabbitMQChannel.Consume(
+		queue.Name, // queue
+		"",         // consumer tag
+		false,      // turn off auto-ack, consider manual ack after successful processing
+		false,      // exclusive
+		false,      // no-local
+		false,      // no-wait
+		nil,        // args
+	)
+	failOnError(err, "Failed to register a consumer")
 
-    msgs, err := ch.Consume(
-        queue.Name,   // queue
-        "",           // consumer tag
-        false,        // turn off auto-ack, consider manual ack after successful processing
-        false,        // exclusive
-        false,        // no-local
-        false,        // no-wait
-        nil,          // args
-    )
-    failOnError(err, "Failed to register a consumer")
+	log.Println("Successfully connected to RabbitMQ and waiting for messages.")
 
-    log.Println("Successfully connected to RabbitMQ and waiting for messages.")
-
-    forever := make(chan bool)
-    go func() {
-        for d := range msgs {
-            log.Printf("Received a message: %s", d.Body)
-            handleMessage(client, d.Body)
-            d.Ack(false) // Acknowledge message only after successful handling
-        }
-    }()
-    log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
-    <-forever
+	forever := make(chan bool)
+	go func() {
+		for d := range msgs {
+			log.Printf("Received a message: %s", d.Body)
+			handleMessage(client, d.Body)
+			d.Ack(false) // Acknowledge message only after successful handling
+		}
+	}()
+	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
+	<-forever
 }
 
 func failOnError(err error, msg string) {
-    if err != nil {
-        log.Panicf("%s: %s", msg, err)
-    }
+	if err != nil {
+		log.Panicf("%s: %s", msg, err)
+	}
 }
 
 func handleMessage(client *mongo.Client, body []byte) {
@@ -222,4 +230,3 @@ func deleteBirthdayRecord(client *mongo.Client, userID string) {
 	}
 	log.Printf("Birthday record deleted for user ID: %s", userID)
 }
-

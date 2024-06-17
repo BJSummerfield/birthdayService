@@ -39,6 +39,9 @@ func init() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Initialize RabbitMQ connection
+	initRabbitMQ()
 }
 
 func main() {
@@ -52,7 +55,7 @@ func main() {
 	r.DELETE("/birthdays/:id", DeleteBirthday(client))
 
 	// Start RabbitMQ listener in a separate goroutine
-    go StartListeningForEvents(client) // Changed this to the correct function call
+	go StartListeningForEvents(client) // Changed this to the correct function call
 
 	// Start the HTTP server
 	port := os.Getenv("PORT")
